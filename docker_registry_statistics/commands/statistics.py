@@ -7,7 +7,6 @@ import docker_registry_statistics.types
 import docker_registry_statistics.utils
 
 
-
 def statistics(ctx: Dict[str, Any]) -> None:
 	'''
 	Calculates statistics about existing tags, images and blobs
@@ -16,6 +15,8 @@ def statistics(ctx: Dict[str, Any]) -> None:
 	image_storage = ctx.obj['image_storage']
 	revision_storage = ctx.obj['revision_storage']
 	tag_storage = ctx.obj['tag_storage']
+
+	missing_blobs = []
 
 	for repository, revisions in sorted(revision_storage.per_repository_revisions.items()):
 		layer_usage = collections.defaultdict(int)
@@ -43,20 +44,27 @@ def statistics(ctx: Dict[str, Any]) -> None:
 			except KeyError:
 				pass
 			else:
-				image_size: int = blob_loader.blobs[image.hash_].size \
-					+ blob_loader.blobs[image.config_blob].size \
-					+ sum(
-						blob_loader.blobs[layer].size
-						for layer in image.data_layers
-					)
+				try:
+					image_size: int = blob_loader.blobs[image.hash_].size \
+						+ blob_loader.blobs[image.config_blob].size \
+						+ sum(
+							blob_loader.blobs[layer].size
+							for layer in image.data_layers
+						)
 
-				# Mark used layers
-				layer_usage[image.hash_] += 1
-				layer_usage[image.config_blob] += 1
-				for layer in image.data_layers:
-					layer_usage[layer] += 1
-
-				logging.debug(">> %s:%s %s", repository, tag.name, docker_registry_statistics.utils.convert_size(image_size))
+					# Mark used layers
+					layer_usage[image.hash_] += 1
+					layer_usage[image.config_blob] += 1
+					for layer in image.data_layers:
+						layer_usage[layer] += 1
+					if image.hash_ in missing_blobs:
+						logging.debug(f">> Missing blob: {image.hash_}")
+					logging.debug(">> %s:%s %s", repository, tag.name, docker_registry_statistics.utils.convert_size(image_size))
+				except KeyError as e:
+					logging.debug(f">> Missing blob: {e}")
+					missing_blobs.append(e.args[0])
+					blob_loader.blobs[e.args[0]] = docker_registry_statistics.types.Blob(hash_=e.args[0],path='/dev/null',type_=docker_registry_statistics.types.BlobTypes.COMPRESSED_LAYER,size=0,data={})
+					logging.debug(">> %s:%s %s", repository, tag.name, docker_registry_statistics.utils.convert_size(image_size))
 
 		tagged_images_size = sum(blob_loader.blobs[blob_hash].size for blob_hash in layer_usage.keys())
 
@@ -76,20 +84,29 @@ def statistics(ctx: Dict[str, Any]) -> None:
 			except KeyError:
 				pass
 			else:
-				image_size: int = blob_loader.blobs[image.hash_].size \
-					+ blob_loader.blobs[image.config_blob].size \
-					+ sum(
-						blob_loader.blobs[layer].size
-						for layer in image.data_layers
-					)
+				try:
+					image_size: int = blob_loader.blobs[image.hash_].size \
+						+ blob_loader.blobs[image.config_blob].size \
+						+ sum(
+							blob_loader.blobs[layer].size
+							for layer in image.data_layers
+						)
 
-				# Mark used layers
-				layer_usage[image.hash_] += 1
-				layer_usage[image.config_blob] += 1
-				for layer in image.data_layers:
-					layer_usage[layer] += 1
+					# Mark used layers
+					layer_usage[image.hash_] += 1
+					layer_usage[image.config_blob] += 1
+					for layer in image.data_layers:
+						layer_usage[layer] += 1
+					if image.hash_ in missing_blobs:
+						logging.debug(f">> Missing blob: {image.hash_}")
 
-				logging.debug(">> %s@%s %s", repository, image_hash, docker_registry_statistics.utils.convert_size(image_size))
+					logging.debug(">> %s@%s %s", repository, image_hash, docker_registry_statistics.utils.convert_size(image_size))
+				except KeyError as e:
+					logging.debug(f">> Missing blob: {e}")
+					missing_blobs.append(e.args[0])
+					blob_loader.blobs[e.args[0]] = docker_registry_statistics.types.Blob(hash_=e.args[0],path='/dev/null',type_=docker_registry_statistics.types.BlobTypes.COMPRESSED_LAYER,size=0,data={})
+					logging.debug(">> %s@%s %s", repository, image_hash, docker_registry_statistics.utils.convert_size(image_size))
+
 		untagged_images_size = sum(blob_loader.blobs[blob_hash].size for blob_hash in layer_usage.keys())
 
 		logging.info("Repository '%s'", repository)
@@ -167,7 +184,6 @@ def statistics(ctx: Dict[str, Any]) -> None:
 		per_blob_type_counts[blob.type_] += 1
 		if blob.hash_ not in layer_usage:
 			per_blob_type_counts_unused[blob.type_] += 1
-
 	logging.info('>> Counts: Total %d, Manifests: %d, Image configs: %d, Compressed data: %d',
 		sum(per_blob_type_counts.values()),
 		per_blob_type_counts[docker_registry_statistics.types.BlobTypes.IMAGE_MANIFEST],
